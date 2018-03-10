@@ -1,0 +1,8 @@
+ansible/roles/common
+ansible/roles/git-client
+ansible/roles/java-jdk
+ansible/roles/java-jre
+ansible/roles/node
+ansible/roles/postfix
+ansible/roles/site.yml
+ansible/roles/swift
