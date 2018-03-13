@@ -1,0 +1,169 @@
+---
+- name: don't backup this host
+  cron:
+    state: absent
+    backup: true
+    name: backup-task
+    minute: 3
+    hour: 2
+    job: /usr/local/bin/runBackup.sh
+  become: true
+
+- name: create the homekit dir
+  file:
+    path: /home/pi/homekit
+    owner: pi
+    group: pi
+    mode: 0700
+    state: directory
+
+- name: create the bin dir
+  file:
+    path: /home/pi/bin
+    owner: pi
+    group: pi
+    mode: 0700
+    state: directory
+
+
+################################################################################
+# Install swift
+################################################################################
+- name: check for swift
+  stat:
+    path: /usr/bin/swift
+  register: swift
+
+- name: check for swiftBuilder
+  stat:
+    path: /home/pi/swiftBuilder-master.zip
+  register: swiftBuilder
+
+- name: download swift builder
+  get_url: 
+    url: https://github.com/uraimo/buildSwiftOnARM/archive/master.zip
+    dest: /home/pi/swiftBuilder-master.zip
+    mode: 0600
+  when: swift.stat.exists == false and swiftBuilder.stat.exists == false
+
+- name: check for swiftBuilder dir
+  stat:
+    path: /home/pi/buildSwiftOnARM-master
+  register: swiftBuilderDir
+
+- name: untar swiftBuilder
+  unarchive:
+    copy: no
+    src: /home/pi/swiftBuilder-master.zip
+    dest: /home/pi/
+  when: swift.stat.exists == false and swiftBuilderDir.stat.exists == false
+
+- name: check for a swapfile
+  stat:
+    path: /var/swapfile
+  register: swapfile
+  
+- name: create swapfile
+  shell: fallocate -l 2G /var/swapfile && chmod 600 /var/swapfile && mkswap /var/swapfile && swapon /var/swapfile
+  become: true
+  when: swapfile.stat.exists == false
+
+- name: Configure swapsize
+  lineinfile: 
+    dest: /etc/dphys-swapfile
+    state: present 
+    regexp: '^CONF_SWAPSIZE='
+    line: 'CONF_SWAPSIZE=2048'
+  become: true
+
+- name: restart swapon
+  shell: /etc/init.d/dphys-swapfile stop && /etc/init.d/dphys-swapfile start
+  become: true
+
+################################################################################
+# Configure Swift version to build
+################################################################################
+#   Was:
+#       checkoutRelease.sh: BRANCH=swift-3.1.1-RELEASE
+#       build.sh: REL=3.1.1
+#   To Be:
+#       checkoutRelease.sh: BRANCH=swift-4.0.3-RELEASE
+#       build.sh: REL=4.0.3
+- name: Change swift version in checkoutRelease.sh
+  lineinfile: 
+    dest: /home/pi/buildSwiftOnARM-master/checkoutRelease.sh
+    state: present 
+    regexp: '^BRANCH=swift-3.1.1-RELEASE'
+    line: 'BRANCH=swift-4.0.3-RELEASE'
+  when: swift.stat.exists == false
+
+- name: Change swift version in build.sh
+  lineinfile: 
+    dest: /home/pi/buildSwiftOnARM-master/build.sh
+    state: present 
+    regexp: '^REL=3.1.1'
+    line: 'REL=4.0.3'
+  when: swift.stat.exists == false
+
+- name: build swift
+  shell: ./clone.sh | tee clone.log && ./checkoutRelease.sh | tee checkoutRelease.log && ./build.sh | tee build.log
+  args:
+    chdir: /home/pi/buildSwiftOnARM-master
+  when: swift.stat.exists == false
+  
+- name: check for installer tarball
+  stat:
+    path: /home/pi/buildSwiftOnARM-master/swift-4.0.3.tgz
+  register: tarball
+  
+- name: install swift
+  unarchive:
+    copy: no
+    src: /home/pi/buildSwiftOnARM-master/swift-4.0.3.tgz
+    dest: /
+  become: true
+  when: swift.stat.exists == false and tarball.stat.exists == true
+
+
+################################################################################
+# Install HAP library
+################################################################################
+- name: install pre-reqs
+  apt:
+    pkg: "{{ item }}"
+    state: latest
+  with_items:
+    - openssl
+    - libssl-dev 
+    - libsodium-dev
+    - libcurl4-openssl-dev
+  become: true
+
+- name: check for HAP source
+  stat:
+    path: /home/pi/HAP-0.5.0
+  register: HAPsrc
+  
+- name: check for HAP tarball
+  stat:
+    path: /home/pi/HAP-0.5.0.tar.gz
+  register: HAPtarball
+  
+- name: get HAP source
+  get_url: 
+    url: https://github.com/Bouke/HAP/archive/0.5.0.tar.gz
+    dest: /home/pi/
+    mode: 0600
+  when: HAPtarball.stat.exists == false and HAPsrc.stat.exists == false
+
+- name: untar HAP
+  unarchive:
+    copy: no
+    src: /home/pi/HAP-0.5.0.tar.gz
+    dest: /home/pi/
+  when: HAPsrc.stat.exists == false
+  
+- name: build HAP
+  shell: /usr/bin/swift build -c release
+  args:
+    chdir: /home/pi/HAP-0.5.0
